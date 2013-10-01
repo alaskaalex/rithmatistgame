@@ -1,0 +1,375 @@
+var browser_height;
+var browser_width;
+var gw;
+var c;
+var context;
+var drawing;
+var m_pos = {x:0, y:0};
+var t_co = [];
+var t_d = [];
+
+var path_stack = [];	
+var current_path = new path([]);
+
+function distanceCoords(a, b){
+	debug("distanceCoords called");
+	return Math.sqrt( Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+}
+
+function CircleMeta(co, r){
+	this.co = co;
+	this.r = r;
+}
+
+function circleC(P){
+	var i;
+	var r, m11, m12, m13, m14;
+	var a = [[0,0,0],[0,0,0],[0,0,0]];
+	var Xo, Yo;
+	
+	
+	debug(P.length);
+
+	for (var i = 0; i < 3; i++)                    // find minor 11
+	{
+		debug (i);
+		debug (P[i].x + ", " + P[i].y);
+		a[i][0] = P[i].x;
+		a[i][1] = P[i].y;
+		a[i][2] = 1;
+	}
+	m11 = determinant( a, 3 );
+	
+	debug ("here1");
+
+	for (var i = 0; i < 3; i++)                    // find minor 12 
+	{
+		a[i][0] = P[i].x*P[i].x + P[i].y*P[i].y;
+		a[i][1] = P[i].y;
+		a[i][2] = 1;
+	}
+	m12 = determinant( a, 3 );
+
+	for (var i = 0; i < 3; i++)                    // find minor 13
+	{
+		a[i][0] = P[i].x*P[i].x + P[i].y*P[i].y;
+		a[i][1] = P[i].x;
+		a[i][2] = 1;
+	}
+	m13 = determinant( a, 3 );
+
+	for (var i = 0; i < 3; i++)                    // find minor 14
+	{
+		a[i][0] = P[i].x*P[i].x + P[i].y*P[i].y;
+		a[i][1] = P[i].x;
+		a[i][2] = P[i].y;
+	}
+	m14 = determinant( a, 3 );
+
+	
+	if (m11 == 0)
+	{
+		r = 0;                                 // not a circle
+		debug ("not a circle");
+	}
+	else
+	{
+		Xo =  0.5 * m12 / m11;                 // center of circle
+		Yo = -0.5 * m13 / m11;
+		r  = Math.sqrt( Xo*Xo + Yo*Yo + m14/m11 );
+	}
+	
+	return new CircleMeta(new coord(Xo, Yo), r);
+}
+
+// Recursive definition of determinate using expansion by minors.
+function determinant( a, n )
+{
+	var i, j, j1, j2;
+	var d = parseFloat("0");
+	var m = [[0,0,0],[0,0,0],[0,0,0]];
+
+	if (n == 2)                                // terminate recursion
+	{
+		d = a[0][0]*a[1][1] - a[1][0]*a[0][1];
+	}
+	else 
+	{
+		d = 0;
+		for (j1 = 0; j1 < n; j1++ )            // do each column
+		{
+			for (i = 1; i < n; i++)            // create minor
+			{
+				j2 = 0;
+				for (j = 0; j < n; j++)
+				{
+					if (j == j1) continue;
+					m[i-1][j2] = a[i][j];
+					j2++;
+				}
+			}
+		
+			// sum (+/-)cofactor * minor  
+			d = d + Math.pow(-1.0, j1)*a[0][j1]*determinant( m, n-1 );
+		}
+	}
+
+	return d;
+}
+
+function path(coords){
+
+	//this is a structure full of coordinates which make up the path
+	this.coords = coords;
+	this.center = new coord(0,0);
+	this.r = 0;
+	this.closed = false;
+	
+	//represents the integrity (the quality/accuracy of the shape)
+	this.integrity = 0;
+	
+	this.pushCoord = pushCoord;
+	this.evaluateShape = evaluateShape;
+	this.evaluateCircle = evaluateCircle;
+	this.draw = draw;
+	
+	function pushCoord (coord){
+		if (coord.x !== undefined && coord.y !== undefined){
+			coords.push(clone(coord));
+			debug(coord.x + "," + coord.y);
+			return true;
+		}
+		return false;
+	}
+	
+	function evaluateShape(){
+	
+		//is closed shape?
+		debug("dist:" + distanceCoords(coords[0], coords[coords.length - 1]));
+		if(this.coords.length > 10 && distanceCoords(coords[0], coords[coords.length - 1]) < 30){
+			this.closed = true;
+		}
+		
+		//is circle?
+		if (this.closed){
+			this.evaluateCircle();
+			if (this.integrity == 0){
+				debug("it's not a circle.");
+			}
+		}
+	}
+		
+	function evaluateCircle (){
+		var thirdLen = Math.floor((this.coords.length/3) - 1);
+		var threeCoords = [];
+		var circlemeta;
+		var rand;
+		var samples = 5;
+		
+		//sample a bunch of times, then average
+		for (var i = 0; i < samples; i++){
+			threeCoords=[];
+			rand = Math.floor((Math.random()*thirdLen)+1); 
+			for (var x = rand; x < this.coords.length; x+=thirdLen){
+				debug(this.coords[x].x + ", " + this.coords[x].y);
+				threeCoords.push(this.coords[x]);
+			}
+			circlemeta = circleC(threeCoords);
+			this.r += circlemeta.r;
+			this.center.x += circlemeta.co.x;
+			this.center.y += circlemeta.co.y;
+		}
+		
+		this.r /= samples;
+		this.center.x /= samples;
+		this.center.y /= samples;
+			
+		var circlefail = 0;
+		for (var x = 0; x < this.coords.length; x++){
+			circlefail += Math.abs(distanceCoords(this.center, this.coords[x]) - this.r);
+		}
+		circlefail /= this.coords.length;
+		circlefail *= 10;
+		circlefail = Math.max(Math.floor(100 - circlefail), 0);
+		debug ("integrity: " + circlefail);
+		this.integrity = circlefail;
+		
+		debug("center: " + this.center.x + ", " + this.center.y);
+	}
+
+	function draw (){
+	 	if (this.coords.length > 0){
+			c.moveTo(this.coords[0].x, this.coords[0].y);
+			c.beginPath();
+			for(var x=0; this.coords.length > x; x++){
+    			context.strokeStyle = "#df4b26";
+ 				context.lineWidth = 5;
+				p_co = this.coords[x];
+				p_d = t_d[x];
+				/*if (p_co.health < 50){
+					c.moveTo(p_co.x, p_co.y);
+					continue;
+				}*/
+				context.lineWidth = 5 * (p_co.health / 100 );
+				c.lineTo(p_co.x, p_co.y);
+ 				//context.lineWidth = p_co.health ;
+				c.stroke();
+				c.beginPath();
+				c.moveTo(p_co.x, p_co.y);
+			}
+			if (this.closed){
+				c.closePath();
+			}
+			c.stroke();
+    	}
+    	if (this.center.x != 0){
+    		c.beginPath();
+    		c.arc(this.center.x, this.center.y, 1, 0, 2 * Math.PI, true);
+    		c.fill();
+    		context.strokeStyle = "blue";
+ 			context.lineWidth = 1;
+    		c.beginPath();
+    		c.arc(this.center.x, this.center.y, this.r, 0, 2 * Math.PI, true);
+    		c.stroke();
+    	}
+	}
+}
+
+
+function coord(x, y, health){
+	this.x = x;
+	this.y = y;
+	this.health = health;
+}
+
+function debug(err){
+	$('#debug').append(err + "<br />");
+	$("#debug").scrollTop($("#debug")[0].scrollHeight);
+}
+
+function recalc_sizes(){
+	browser_height = $(window).innerHeight();
+	browser_width = $(window).innerWidth();
+	gw.attr("width", browser_width);
+	gw.attr("height", browser_height);
+}
+
+var pushPoint = function (co, d){
+	t_co.push(clone(co));
+	t_d.push(d);
+	debug(co.x + "," + co.y + "," + d);
+}
+
+function clone(oldObject) {
+   return jQuery.extend(true, {}, oldObject);
+}
+
+$(window).resize(function(){
+	recalc_sizes();
+});
+
+
+
+$(document).ready(function(){
+	gw=$('#gw');
+	recalc_sizes();
+	c = gw[0].getContext('2d');
+	context = c;
+	startloop();
+	
+	
+	$('canvas').mousemove (function (e) {
+		m_pos.x = e.pageX;
+		m_pos.y = e.pageY;
+		if (drawing){
+			//m_pos.health = Math.floor(Math.random() * 50) + 50;
+			current_path.pushCoord(m_pos);
+		}
+	});
+
+	$('canvas').mousedown( function (e) {
+		drawing = true;
+		m_pos.x = e.pageX;
+		m_pos.y = e.pageY;
+		current_path.pushCoord(m_pos);
+		path_stack.push(current_path);
+		debug(path_stack.length);
+	});
+
+	$('canvas').mouseup( function (e) { 
+		drawing = false;
+		current_path.pushCoord(m_pos);
+		current_path.evaluateShape();
+		current_path = new path([]);
+	} );
+	
+});
+
+
+var clearCanvas = function () {
+	c.clearRect(0,0,browser_width, browser_height);
+}
+
+var updateGame = function() {
+
+
+}
+
+var drawGame = function() {
+	clearCanvas();
+    context.fillStyle = "blue";
+    context.font = "bold 12px Arial";
+    context.fillText("Zibri", 10, 10);
+    context.strokeStyle = "#df4b26";
+    context.fillStyle = "#df4b26";
+  	context.lineJoin = "round";
+ 	context.lineWidth = 5;
+ 	
+ 	for (var x = 0; x < path_stack.length; x++){
+ 		path_stack[x].draw();
+ 	}
+}
+
+
+var mainloop = function() {
+	updateGame();
+	drawGame();
+};
+
+var startloop = function() {
+	var animFrame = window.requestAnimationFrame ||
+			window.webkitRequestAnimationFrame ||
+			window.mozRequestAnimationFrame    ||
+			window.oRequestAnimationFrame      ||
+			window.msRequestAnimationFrame     ||
+			null ;
+
+	if ( animFrame !== null ) {
+		var canvas = $('canvas').get(0);
+
+		/*if ( $.browser.mozilla ) {
+			var recursiveAnim = function() {
+				mainloop();
+				animFrame();
+			};
+
+			// setup for multiple calls
+			window.addEventListener("MozBeforePaint", recursiveAnim, false);
+
+			// start the mainloop
+			animFrame();
+		} else {*/
+			var recursiveAnim = function() {
+				mainloop();
+				animFrame( recursiveAnim, canvas );
+			};
+
+			// start the mainloop
+			animFrame( recursiveAnim, canvas );
+		//}
+	} else {
+		var ONE_FRAME_TIME = 1000.0 / 60.0 ;
+		setInterval( mainloop, ONE_FRAME_TIME );
+	}
+}
+
